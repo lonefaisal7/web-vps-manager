@@ -40,9 +40,26 @@
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #374151; border-radius: 99px; }
-    /* Context menu */
     #ctx-menu { animation: ctxIn 0.15s ease; }
     @keyframes ctxIn { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
+    /* Branding link hover glow */
+    .brand-link {
+      transition: color 0.2s ease, text-shadow 0.2s ease, transform 0.15s ease;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .brand-link:hover {
+      color: #38bdf8;
+      text-shadow: 0 0 12px rgba(56,189,248,0.7), 0 0 24px rgba(56,189,248,0.3);
+      transform: translateY(-1px);
+    }
+    .brand-link-green:hover {
+      color: #34d399;
+      text-shadow: 0 0 12px rgba(52,211,153,0.7), 0 0 24px rgba(52,211,153,0.3);
+    }
+    .brand-link-purple:hover {
+      color: #a78bfa;
+      text-shadow: 0 0 12px rgba(167,139,250,0.7), 0 0 24px rgba(167,139,250,0.3);
+    }
   </style>
 </head>
 <body class="text-white overflow-hidden h-screen">
@@ -88,7 +105,22 @@
       </button>
     </nav>
 
-    <div class="px-2 pt-3 border-t border-white/5">
+    <!-- ── SIDEBAR BRANDING FOOTER ── -->
+    <div class="mx-1 my-3 border-t border-white/5 pt-3 text-center space-y-1.5">
+      <div class="text-[9px] uppercase tracking-[0.18em] text-gray-600 mb-1">Created by</div>
+      <div class="flex items-center justify-center gap-3 flex-wrap">
+        <a href="https://t.me/lonefaisal" target="_blank" class="brand-link brand-link-sky text-[10px] font-semibold text-sky-300">
+          <svg class="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.833.941z"/></svg>
+          LONE FAISAL
+        </a>
+        <a href="https://t.me/TrueProfessor" target="_blank" class="brand-link brand-link-purple text-[10px] font-semibold text-purple-300">
+          <svg class="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.833.941z"/></svg>
+          Professor
+        </a>
+      </div>
+    </div>
+
+    <div class="px-2 pt-2 border-t border-white/5">
       <button onclick="logout()" class="btn-mac w-full text-[11px] text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-xl py-2 flex items-center justify-center gap-2 border border-white/8 transition">
         <span>🚪</span><span>Logout</span>
       </button>
@@ -143,8 +175,6 @@
         <h2 class="text-base font-semibold tracking-tight">File Manager</h2>
         <p class="text-[11px] text-gray-500 mt-0.5">macOS Finder-style. Double-click to open. Single-click to select.</p>
       </div>
-
-      <!-- Toolbar -->
       <div class="glass border border-white/10 rounded-2xl p-3 mb-3 flex flex-wrap items-center gap-2">
         <div class="flex-1 flex items-center gap-2 min-w-0">
           <span class="text-[11px] text-gray-400 flex-shrink-0">Path</span>
@@ -169,7 +199,6 @@
             <input type="file" class="hidden" onchange="uploadFile(event)" />
           </label>
         </div>
-        <!-- View toggle -->
         <div class="flex items-center gap-1 border border-white/10 rounded-xl overflow-hidden">
           <button id="view-grid-btn" onclick="setView(true)"
             class="text-[11px] px-2.5 py-1.5 bg-emerald-500/80 text-slate-950 font-medium">
@@ -181,7 +210,6 @@
           </button>
         </div>
       </div>
-
       <div id="file-list" class="glass border border-white/10 rounded-2xl p-3 overflow-auto" style="min-height:260px;"></div>
     </section>
 
@@ -246,6 +274,36 @@
             <input id="uninstall-confirm" placeholder="Type DELETE"
               class="flex-1 bg-black/40 border border-red-500/60 rounded-xl px-3 py-1.5 text-xs text-gray-200 placeholder:text-red-400/50 outline-none focus:border-red-300 focus:ring-1 focus:ring-red-500/40 transition" />
             <button onclick="confirmUninstall()" class="btn-mac text-[11px] px-3 py-1.5 rounded-full bg-red-600 text-white font-semibold shadow shadow-red-800/60">Uninstall</button>
+          </div>
+        </div>
+
+        <!-- ── BRANDING CARD IN SETTINGS ── -->
+        <div class="md:col-span-2 glass border border-indigo-500/20 rounded-2xl p-5 text-center">
+          <div class="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-3">About this Panel</div>
+          <div class="text-sm text-gray-300 mb-1 font-medium">
+            Created by
+            <a href="https://t.me/lonefaisal" target="_blank" class="brand-link text-sky-300 font-bold mx-1">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.833.941z"/></svg>
+              LONE FAISAL
+            </a>
+            &amp;
+            <a href="https://t.me/TrueProfessor" target="_blank" class="brand-link brand-link-purple text-purple-300 font-bold mx-1">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.833.941z"/></svg>
+              Professor
+            </a>
+          </div>
+          <div class="text-[11px] text-gray-500 mb-4">📢 Official Channels</div>
+          <div class="flex items-center justify-center gap-4 flex-wrap">
+            <a href="https://t.me/arrow_network" target="_blank"
+              class="brand-link brand-link-green text-emerald-300 text-xs font-bold px-4 py-2 rounded-full border border-emerald-500/30 bg-emerald-500/8 hover:bg-emerald-500/15 hover:border-emerald-400/60 transition-all duration-200">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.833.941z"/></svg>
+              ARROW NETWORK
+            </a>
+            <a href="https://t.me/kmri_network_reborn" target="_blank"
+              class="brand-link text-sky-300 text-xs font-bold px-4 py-2 rounded-full border border-sky-500/30 bg-sky-500/8 hover:bg-sky-500/15 hover:border-sky-400/60 transition-all duration-200">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12l-6.871 4.326-2.962-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.833.941z"/></svg>
+              KMRI NETWORK
+            </a>
           </div>
         </div>
       </div>
@@ -363,8 +421,8 @@ async function loadFiles(path){
       const eid = 'fc_'+btoa(unescape(encodeURIComponent(e.path))).replace(/[^a-zA-Z0-9]/g,'').slice(0,20);
       html += `<div id="${eid}" class="file-card rounded-2xl border border-slate-700/80 bg-slate-900/60 p-3 flex flex-col items-center cursor-pointer group relative"
           onclick="selectCard('${eid}')"
-          ondblclick="${e.is_dir ? `loadFiles('${e.path.replace(/'/g,"\\'")}')`:`editFile('${e.path.replace(/'/g,"\\'")}')`}"
-          oncontextmenu="showCtxMenu(event,'${e.path.replace(/'/g,"\\'")}',${ e.is_dir })">
+          ondblclick="${e.is_dir ? `loadFiles('${e.path.replace(/'/g,"\\'")}')` : `editFile('${e.path.replace(/'/g,"\\'")}')` }"
+          oncontextmenu="showCtxMenu(event,'${e.path.replace(/'/g,"\\'")}',${e.is_dir})">
         <div class="text-3xl mb-1.5">${icon}</div>
         <div class="text-[10px] text-gray-200 text-center truncate w-full" title="${e.name}">${e.name}</div>
         <div class="text-[9px] text-gray-500 mt-0.5">${e.permissions}</div>
@@ -375,26 +433,22 @@ async function loadFiles(path){
   } else {
     let html = '<table class="w-full text-[11px]"><thead><tr class="text-gray-500 border-b border-white/5 uppercase">';
     html += '<th class="text-left px-2 py-2">Name</th><th class="text-left px-2 py-2">Perm</th><th class="text-right px-2 py-2">Size</th><th class="px-2 py-2 text-center">Actions</th></tr></thead><tbody>';
-    if(path!=='/'){
+    if(path!='/'){
       html += `<tr class="hover:bg-white/5 cursor-pointer" ondblclick="loadFiles('${parentDir(path)}')"><td class="px-2 py-2 text-sky-400" colspan="4">📂 ..</td></tr>`;
     }
     d.entries.forEach(e=>{
       const icon = e.is_dir ? '📁' : getFileIcon(e.name);
       const size = e.is_dir?'–':fmtSize(e.size);
       html += `<tr class="border-b border-white/5 hover:bg-white/5 group">
-        <td class="px-2 py-2 cursor-pointer" ondblclick="${e.is_dir?`loadFiles('${e.path.replace(/'/g,"\\'")}')` : `editFile('${e.path.replace(/'/g,"\\'")}')`}">${icon} ${e.name}</td>
+        <td class="px-2 py-2 cursor-pointer" ondblclick="${e.is_dir?`loadFiles('${e.path.replace(/'/g,"\\'")}')` : `editFile('${e.path.replace(/'/g,"\\'")}')` }">${icon} ${e.name}</td>
         <td class="px-2 py-2 font-mono text-[10px] text-gray-500">${e.permissions}</td>
         <td class="px-2 py-2 text-right text-gray-400">${size}</td>
         <td class="px-2 py-2 text-center">
           <div class="inline-flex gap-1 opacity-0 group-hover:opacity-100 transition">
-            ${e.is_dir?`<button onclick="openTerminalAt('${e.path.replace(/'/g,"\\'")}')"
-              class="btn-mac bg-slate-800 border border-slate-600 text-[10px] rounded-full px-2 py-0.5">🖥️</button>`:''}
-            <button onclick="renameItem('${e.path.replace(/'/g,"\\'")}')"
-              class="btn-mac bg-slate-800 border border-slate-600 text-[10px] rounded-full px-2 py-0.5">✏️</button>
-            <button onclick="deleteItem('${e.path.replace(/'/g,"\\'")}')"
-              class="btn-mac bg-red-600 border border-red-500 text-[10px] rounded-full px-2 py-0.5">🗑️</button>
-            ${!e.is_dir?`<a href="/api/files/download?path=${encodeURIComponent(e.path)}"
-              class="btn-mac bg-slate-800 border border-slate-600 text-[10px] rounded-full px-2 py-0.5">⬇</a>`:''}
+            ${e.is_dir?`<button onclick="openTerminalAt('${e.path.replace(/'/g,"\\'")}')"\n              class="btn-mac bg-slate-800 border border-slate-600 text-[10px] rounded-full px-2 py-0.5">🖥️</button>`:''}
+            <button onclick="renameItem('${e.path.replace(/'/g,"\\'")}')"\n              class="btn-mac bg-slate-800 border border-slate-600 text-[10px] rounded-full px-2 py-0.5">✏️</button>
+            <button onclick="deleteItem('${e.path.replace(/'/g,"\\'")}')"\n              class="btn-mac bg-red-600 border border-red-500 text-[10px] rounded-full px-2 py-0.5">🗑️</button>
+            ${!e.is_dir?`<a href="/api/files/download?path=${encodeURIComponent(e.path)}"\n              class="btn-mac bg-slate-800 border border-slate-600 text-[10px] rounded-full px-2 py-0.5">⬇</a>`:''}
           </div>
         </td>
       </tr>`;
