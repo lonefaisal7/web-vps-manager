@@ -1,6 +1,8 @@
 import psutil
 import time
 import threading
+import subprocess
+import json
 from collections import deque
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -9,19 +11,17 @@ from backend.utils.auth_guard import require_auth
 router = APIRouter()
 
 # ── In-memory history store ──
-# Each sample: (timestamp, bytes_sent, bytes_recv)
-# Keep 1 year max = 365*24*3600 seconds, but we sample every second
-# We use deque with maxlen = 366 days * 86400 sec is too large;
-# instead store 1-second samples in a rolling deque for 1 year in daily buckets.
-# Practical approach: keep last 32 days of per-second data (2,764,800 samples)
-# That's ~66 MB RAM max. We'll keep 32*86400 = 2,764,800 entries max.
-
 MAX_SAMPLES = 32 * 86400  # 32 days of per-second samples
 _history = deque(maxlen=MAX_SAMPLES)
 _lock = threading.Lock()
 _last_counters = None
 _last_time = None
 _running = False
+
+# ── Speed test state ──
+_speedtest_lock = threading.Lock()
+_speedtest_running = False
+_speedtest_result = None   # last cached result
 
 
 def _collect_loop():
@@ -56,7 +56,6 @@ def start_collector():
         t.start()
 
 
-# Start immediately on import
 start_collector()
 
 
@@ -86,7 +85,6 @@ RANGE_SECONDS = {
 
 @router.get("/live")
 async def net_live(request: Request):
-    """Returns current download & upload speed (latest 1-second sample)."""
     require_auth(request)
     with _lock:
         if not _history:
@@ -102,17 +100,11 @@ async def net_live(request: Request):
 
 @router.get("/history")
 async def net_history(request: Request, range: str = "24h"):
-    """
-    Returns total downloaded + uploaded for the chosen range,
-    plus a sparkline (up to 60 aggregated buckets) for the chart.
-    """
     require_auth(request)
     seconds = RANGE_SECONDS.get(range, 86400)
     cutoff = time.time() - seconds
-
     with _lock:
         samples = [s for s in _history if s["ts"] >= cutoff]
-
     if not samples:
         return JSONResponse({
             "range": range,
@@ -121,12 +113,8 @@ async def net_history(request: Request, range: str = "24h"):
             "sparkline_dl": [],
             "sparkline_ul": [],
         })
-
-    # Total bytes transferred in range
-    total_recv_bytes = sum(s["dl"] for s in samples)  # bytes/s * 1s each
+    total_recv_bytes = sum(s["dl"] for s in samples)
     total_sent_bytes = sum(s["ul"] for s in samples)
-
-    # Build sparkline: aggregate into 60 buckets
     bucket_count = 60
     bucket_size = max(1, len(samples) // bucket_count)
     sparkline_dl = []
@@ -135,7 +123,6 @@ async def net_history(request: Request, range: str = "24h"):
         chunk = samples[i:i + bucket_size]
         sparkline_dl.append(round(sum(c["dl"] for c in chunk) / len(chunk), 1))
         sparkline_ul.append(round(sum(c["ul"] for c in chunk) / len(chunk), 1))
-
     return JSONResponse({
         "range": range,
         "total_dl": _fmt_bytes(total_recv_bytes),
@@ -143,3 +130,69 @@ async def net_history(request: Request, range: str = "24h"):
         "sparkline_dl": sparkline_dl[-60:],
         "sparkline_ul": sparkline_ul[-60:],
     })
+
+
+# ──────────────────────────────────────────
+# SPEED TEST
+# ──────────────────────────────────────────
+
+def _run_speedtest_thread():
+    """Runs speedtest-cli in a subprocess (JSON mode) and caches the result."""
+    global _speedtest_running, _speedtest_result
+    try:
+        proc = subprocess.run(
+            ["speedtest-cli", "--json", "--secure"],
+            capture_output=True, text=True, timeout=120
+        )
+        if proc.returncode == 0:
+            data = json.loads(proc.stdout)
+            _speedtest_result = {
+                "status": "ok",
+                "download_mbps": round(data["download"] / 1_000_000, 2),
+                "upload_mbps":   round(data["upload"]   / 1_000_000, 2),
+                "ping_ms":       round(data["ping"], 1),
+                "server":        data["server"]["name"],
+                "server_country": data["server"]["country"],
+                "sponsor":       data["server"]["sponsor"],
+                "timestamp":     data["timestamp"],
+                "ip":            data.get("client", {}).get("ip", "--"),
+                "isp":           data.get("client", {}).get("isp", "--"),
+            }
+        else:
+            _speedtest_result = {
+                "status": "error",
+                "message": proc.stderr.strip() or "speedtest-cli failed"
+            }
+    except subprocess.TimeoutExpired:
+        _speedtest_result = {"status": "error", "message": "Speed test timed out (120s)"}
+    except FileNotFoundError:
+        _speedtest_result = {"status": "error", "message": "speedtest-cli not found. Run: pip install speedtest-cli"}
+    except Exception as e:
+        _speedtest_result = {"status": "error", "message": str(e)}
+    finally:
+        _speedtest_running = False
+
+
+@router.post("/speedtest")
+async def run_speedtest(request: Request):
+    """Starts a speed test in background. Returns running=True while in progress."""
+    require_auth(request)
+    global _speedtest_running
+    with _speedtest_lock:
+        if _speedtest_running:
+            return JSONResponse({"status": "running"})
+        _speedtest_running = True
+    t = threading.Thread(target=_run_speedtest_thread, daemon=True)
+    t.start()
+    return JSONResponse({"status": "started"})
+
+
+@router.get("/speedtest")
+async def get_speedtest(request: Request):
+    """Poll for speed test status / last result."""
+    require_auth(request)
+    if _speedtest_running:
+        return JSONResponse({"status": "running"})
+    if _speedtest_result is None:
+        return JSONResponse({"status": "idle"})
+    return JSONResponse(_speedtest_result)

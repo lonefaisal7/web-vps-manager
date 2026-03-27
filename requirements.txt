@@ -7,3 +7,4 @@ websockets
 itsdangerous
 python-jose[cryptography]
 aiofiles
+speedtest-cli
