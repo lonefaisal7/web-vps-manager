@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+bcrypt
+python-multipart
+psutil
+websockets
+itsdangerous
+python-jose[cryptography]
+aiofiles
