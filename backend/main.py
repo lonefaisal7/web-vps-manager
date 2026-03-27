@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 import secrets
 
-from backend.routes import auth, files, terminal, system, processes, settings
+from backend.routes import auth, files, terminal, system, processes, settings, network
 
 app = FastAPI(title="Web VPS Manager", version="1.0.0")
 
@@ -43,6 +43,7 @@ app.include_router(terminal.router, prefix="/ws")
 app.include_router(system.router, prefix="/api/system")
 app.include_router(processes.router, prefix="/api/processes")
 app.include_router(settings.router, prefix="/api/settings")
+app.include_router(network.router, prefix="/api/network")
 
 
 @app.get("/", response_class=HTMLResponse)
