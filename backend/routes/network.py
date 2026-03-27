@@ -2,6 +2,7 @@ import psutil
 import time
 import threading
 import subprocess
+import shutil
 import json
 from collections import deque
 from fastapi import APIRouter, Request
@@ -133,13 +134,73 @@ async def net_history(request: Request, range: str = "24h"):
 
 
 # ──────────────────────────────────────────
+# AUTO-INSTALL HELPER
+# ──────────────────────────────────────────
+
+def _ensure_speedtest_cli() -> tuple[bool, str]:
+    """
+    Checks if speedtest-cli is available on PATH.
+    If not, tries to install it automatically:
+      1. apt-get install -y speedtest-cli  (Debian / Ubuntu)
+      2. pip install speedtest-cli          (fallback, any OS)
+    Returns (success: bool, message: str).
+    """
+    # Already installed — nothing to do
+    if shutil.which("speedtest-cli"):
+        return True, "ok"
+
+    # ── Try apt first (most VPS distros are Debian/Ubuntu) ──
+    apt = shutil.which("apt-get") or shutil.which("apt")
+    if apt:
+        try:
+            # Update package lists (best-effort, ignore errors)
+            subprocess.run(
+                [apt, "update", "-qq"],
+                capture_output=True, timeout=60
+            )
+            res = subprocess.run(
+                [apt, "install", "-y", "speedtest-cli"],
+                capture_output=True, text=True, timeout=120
+            )
+            if res.returncode == 0 and shutil.which("speedtest-cli"):
+                return True, "installed via apt"
+        except Exception:
+            pass  # fall through to pip
+
+    # ── Fallback: pip install ──
+    try:
+        pip = shutil.which("pip3") or shutil.which("pip")
+        if pip:
+            res = subprocess.run(
+                [pip, "install", "--quiet", "speedtest-cli"],
+                capture_output=True, text=True, timeout=120
+            )
+            if res.returncode == 0 and shutil.which("speedtest-cli"):
+                return True, "installed via pip"
+    except Exception:
+        pass
+
+    return False, (
+        "speedtest-cli could not be installed automatically. "
+        "Run manually: apt install speedtest-cli"
+    )
+
+
+# ──────────────────────────────────────────
 # SPEED TEST
 # ──────────────────────────────────────────
 
 def _run_speedtest_thread():
-    """Runs speedtest-cli in a subprocess (JSON mode) and caches the result."""
+    """Auto-installs speedtest-cli if missing, then runs the test."""
     global _speedtest_running, _speedtest_result
     try:
+        # ── Step 1: ensure binary exists ──
+        ok, msg = _ensure_speedtest_cli()
+        if not ok:
+            _speedtest_result = {"status": "error", "message": msg}
+            return
+
+        # ── Step 2: run the test ──
         proc = subprocess.run(
             ["speedtest-cli", "--json", "--secure"],
             capture_output=True, text=True, timeout=120
@@ -161,12 +222,10 @@ def _run_speedtest_thread():
         else:
             _speedtest_result = {
                 "status": "error",
-                "message": proc.stderr.strip() or "speedtest-cli failed"
+                "message": proc.stderr.strip() or "speedtest-cli exited with code " + str(proc.returncode)
             }
     except subprocess.TimeoutExpired:
         _speedtest_result = {"status": "error", "message": "Speed test timed out (120s)"}
-    except FileNotFoundError:
-        _speedtest_result = {"status": "error", "message": "speedtest-cli not found. Run: pip install speedtest-cli"}
     except Exception as e:
         _speedtest_result = {"status": "error", "message": str(e)}
     finally:
