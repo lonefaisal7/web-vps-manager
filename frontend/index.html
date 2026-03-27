@@ -75,7 +75,116 @@
       50% { opacity: 1; }
     }
     .progress-pulse { animation: progressPulse 1.2s ease infinite; }
-    /* Gauge arc drawn on canvas */
+
+    /* ── FILE EDITOR MODAL ── */
+    #file-editor-overlay {
+      position: fixed; inset: 0; z-index: 60;
+      background: rgba(0,0,0,0.70);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.22s ease;
+    }
+    #file-editor-overlay.open {
+      opacity: 1; pointer-events: all;
+    }
+    #file-editor-window {
+      width: min(860px, 94vw);
+      height: min(680px, 88vh);
+      background: linear-gradient(160deg, #0f172a 0%, #0a0f1e 100%);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 16px;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.04) inset;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      transform: scale(0.93) translateY(14px);
+      transition: transform 0.26s cubic-bezier(0.34,1.4,0.64,1), opacity 0.22s ease;
+      opacity: 0;
+    }
+    #file-editor-overlay.open #file-editor-window {
+      transform: scale(1) translateY(0);
+      opacity: 1;
+    }
+    /* Title bar */
+    #file-editor-titlebar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 11px 16px 10px;
+      background: rgba(255,255,255,0.035);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      flex-shrink: 0;
+      user-select: none;
+    }
+    .editor-dot {
+      width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+      cursor: default;
+    }
+    .editor-dot-red   { background: #ff5f57; box-shadow: 0 0 6px #ff5f5780; }
+    .editor-dot-yel   { background: #ffbd2e; box-shadow: 0 0 6px #ffbd2e80; }
+    .editor-dot-grn   { background: #28c840; box-shadow: 0 0 6px #28c84080; }
+    #editor-title-text {
+      flex: 1; font-size: 13px; font-weight: 600; color: #e2e8f0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #editor-path-text {
+      font-size: 10px; color: #64748b;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      max-width: 320px;
+    }
+    /* Status bar inside editor */
+    #file-editor-statusbar {
+      font-size: 10px; color: #475569;
+      padding: 2px 16px 0;
+      flex-shrink: 0;
+      height: 18px;
+    }
+    /* Textarea wrapper */
+    #file-editor-body {
+      flex: 1; display: flex; flex-direction: column;
+      overflow: hidden; padding: 0;
+    }
+    #file-editor-textarea {
+      flex: 1;
+      width: 100%;
+      background: #060c18;
+      color: #e2e8f0;
+      font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Monaco, Consolas, monospace;
+      font-size: 13.5px;
+      line-height: 1.65;
+      padding: 16px 20px;
+      border: none;
+      outline: none;
+      resize: none;
+      overflow-y: auto;
+      tab-size: 2;
+      white-space: pre;
+      overflow-wrap: normal;
+      overflow-x: auto;
+    }
+    #file-editor-textarea::selection { background: rgba(99,102,241,0.40); }
+    /* Bottom action bar */
+    #file-editor-actions {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px;
+      padding: 10px 16px;
+      border-top: 1px solid rgba(255,255,255,0.07);
+      background: rgba(255,255,255,0.025);
+      flex-shrink: 0;
+    }
+    #editor-save-status {
+      font-size: 11px;
+      color: #64748b;
+      min-width: 140px;
+    }
+    #editor-save-status.ok   { color: #34d399; }
+    #editor-save-status.err  { color: #f87171; }
+    #editor-save-status.busy { color: #60a5fa; }
+    /* Loading shimmer inside textarea */
+    .editor-loading {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      background: #060c18; color: #334155; font-size: 13px;
+      font-family: monospace;
+    }
   </style>
 </head>
 <body class="text-white overflow-hidden h-screen">
@@ -263,20 +372,17 @@
             <div class="spin-ring"></div>
             <p class="text-sm font-semibold text-indigo-300">Running speed test…</p>
             <p class="text-[11px] text-gray-500">Measuring ping, download &amp; upload speed</p>
-            <!-- Animated progress bar -->
             <div class="w-full max-w-xs">
               <div class="h-1.5 rounded-full bg-slate-800 overflow-hidden">
                 <div class="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-400 to-purple-500 progress-pulse" style="width:100%"></div>
               </div>
             </div>
-            <!-- Animated step hints -->
             <div id="st-step" class="text-[11px] text-gray-500 italic">Connecting to best server…</div>
           </div>
         </div>
 
         <!-- RESULTS state -->
         <div id="st-results" class="hidden">
-          <!-- Server / meta row -->
           <div class="flex flex-wrap items-center justify-between gap-3 mb-4 px-1">
             <div class="flex items-center gap-2">
               <span class="text-base">🌍</span>
@@ -300,10 +406,7 @@
               </div>
             </div>
           </div>
-
-          <!-- Big result cards -->
           <div class="grid grid-cols-3 gap-3">
-            <!-- Ping -->
             <div class="st-result-card bg-slate-900/70 border border-amber-500/30 rounded-2xl p-4 text-center" style="animation-delay:0ms">
               <div class="text-2xl mb-1">📡</div>
               <div class="text-3xl font-black text-amber-300 st-num" id="st-ping">--</div>
@@ -312,7 +415,6 @@
                 <div id="st-ping-bar" class="h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-400 transition-all duration-700" style="width:0%"></div>
               </div>
             </div>
-            <!-- Download -->
             <div class="st-result-card bg-slate-900/70 border border-sky-500/30 rounded-2xl p-4 text-center" style="animation-delay:80ms">
               <div class="text-2xl mb-1">⬇️</div>
               <div class="text-3xl font-black text-sky-300 st-num" id="st-dl">--</div>
@@ -321,7 +423,6 @@
                 <div id="st-dl-bar" class="h-full rounded-full bg-gradient-to-r from-sky-400 to-cyan-400 transition-all duration-700" style="width:0%"></div>
               </div>
             </div>
-            <!-- Upload -->
             <div class="st-result-card bg-slate-900/70 border border-violet-500/30 rounded-2xl p-4 text-center" style="animation-delay:160ms">
               <div class="text-2xl mb-1">⬆️</div>
               <div class="text-3xl font-black text-violet-300 st-num" id="st-ul">--</div>
@@ -475,6 +576,67 @@
 
   </main>
 </div>
+
+<!-- ════════════════════════════════════════
+     macOS-STYLE FILE EDITOR MODAL
+════════════════════════════════════════ -->
+<div id="file-editor-overlay">
+  <div id="file-editor-window" role="dialog" aria-modal="true" aria-labelledby="editor-title-text">
+
+    <!-- Title bar -->
+    <div id="file-editor-titlebar">
+      <span class="editor-dot editor-dot-red"   id="editor-dot-close" title="Close"></span>
+      <span class="editor-dot editor-dot-yel"   title="Minimise (noop)"></span>
+      <span class="editor-dot editor-dot-grn"   title="Fullscreen (noop)"></span>
+      <div style="flex:1;min-width:0;margin-left:8px;">
+        <div id="editor-title-text">untitled</div>
+        <div id="editor-path-text"></div>
+      </div>
+      <!-- Reload button in title bar -->
+      <button id="editor-reload-btn" title="Reload file from disk"
+        style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.10);border-radius:8px;padding:3px 10px;font-size:11px;color:#94a3b8;cursor:pointer;transition:background 0.15s,color 0.15s;"
+        onmouseover="this.style.background='rgba(255,255,255,0.12)';this.style.color='#e2e8f0';"
+        onmouseout="this.style.background='rgba(255,255,255,0.06)';this.style.color='#94a3b8';">
+        🔄 Reload
+      </button>
+    </div>
+
+    <!-- Editor body -->
+    <div id="file-editor-body">
+      <textarea id="file-editor-textarea" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+    </div>
+
+    <!-- Status bar -->
+    <div id="file-editor-statusbar"></div>
+
+    <!-- Action bar -->
+    <div id="file-editor-actions">
+      <span id="editor-save-status"></span>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <!-- Cancel -->
+        <button id="editor-cancel-btn"
+          style="font-size:12px;font-weight:600;padding:6px 18px;border-radius:999px;
+                 background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);
+                 color:#94a3b8;cursor:pointer;transition:all 0.15s;"
+          onmouseover="this.style.background='rgba(255,255,255,0.12)';this.style.color='#e2e8f0';"
+          onmouseout="this.style.background='rgba(255,255,255,0.06)';this.style.color='#94a3b8';">
+          ✕ Cancel
+        </button>
+        <!-- Save -->
+        <button id="editor-save-btn"
+          style="font-size:12px;font-weight:700;padding:6px 22px;border-radius:999px;
+                 background:linear-gradient(135deg,#34d399,#22c55e);
+                 border:none;color:#052e16;cursor:pointer;
+                 box-shadow:0 4px 14px rgba(52,211,153,0.35);
+                 transition:all 0.18s;">
+          💾 Save
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+<!-- END FILE EDITOR MODAL -->
 
 <!-- New Item Modal -->
 <div id="new-item-modal" class="hidden fixed inset-0 z-40 flex items-center justify-center">
@@ -649,7 +811,6 @@ function stStopStepAnim(){
   if(_stStepTimer){ clearInterval(_stStepTimer); _stStepTimer=null; }
 }
 
-// Animate a number counting up smoothly
 function animateNumber(el, target, decimals=2, durationMs=900){
   const start = parseFloat(el.textContent) || 0;
   const steps = 40;
@@ -664,14 +825,12 @@ function animateNumber(el, target, decimals=2, durationMs=900){
 }
 
 function stFillResults(d){
-  // Meta
   document.getElementById('st-server').textContent  = d.server + ', ' + d.server_country;
   document.getElementById('st-sponsor').textContent = d.sponsor;
   document.getElementById('st-ip').textContent      = d.ip;
   document.getElementById('st-isp').textContent     = d.isp;
   const ts = d.timestamp ? new Date(d.timestamp).toLocaleString() : '--';
   document.getElementById('st-time').textContent    = ts;
-  // Reset
   document.getElementById('st-ping').textContent = '0';
   document.getElementById('st-dl').textContent   = '0.00';
   document.getElementById('st-ul').textContent   = '0.00';
@@ -679,12 +838,10 @@ function stFillResults(d){
   document.getElementById('st-dl-bar').style.width   = '0%';
   document.getElementById('st-ul-bar').style.width   = '0%';
   stSetState('results');
-  // Animate numbers after slight delay for reveal animation
   setTimeout(()=>{
     animateNumber(document.getElementById('st-ping'), d.ping_ms, 1, 700);
     animateNumber(document.getElementById('st-dl'),   d.download_mbps, 2, 900);
     animateNumber(document.getElementById('st-ul'),   d.upload_mbps,   2, 900);
-    // Bars: ping bar max ~200ms, speed bars max ~1000 Mbps
     setTimeout(()=>{
       document.getElementById('st-ping-bar').style.width = Math.min(d.ping_ms/200*100, 100)+'%';
       document.getElementById('st-dl-bar').style.width   = Math.min(d.download_mbps/1000*100, 100)+'%';
@@ -706,7 +863,6 @@ async function runSpeedTest(){
     document.getElementById('st-error-msg').textContent = 'Request failed: '+e.message;
     return;
   }
-  // Poll every 3s until done
   _stPollTimer = setInterval(async ()=>{
     try {
       const d = await fetch('/api/network/speedtest').then(r=>r.json());
@@ -728,7 +884,9 @@ async function runSpeedTest(){
   }, 3000);
 }
 
-// ─ FILE MANAGER ─
+// ════════════════════════════════════════
+// FILE MANAGER
+// ════════════════════════════════════════
 let currentPath = '/';
 let gridView = true;
 let ctxTarget = null;
@@ -759,7 +917,7 @@ async function loadFiles(path){
   if(d.error){ el.innerHTML='<div class="p-4 text-red-300 text-xs">'+d.error+'</div>'; return; }
   if(gridView){
     let html = '<div class="grid finder-grid gap-2.5">';
-    if(path!=='/'){
+    if(path!='/'){
       html+=`<div ondblclick="loadFiles('${parentDir(path)}')" class="file-card rounded-2xl border border-slate-700/80 bg-slate-900/60 p-3 flex flex-col items-center cursor-pointer"><div class="text-3xl mb-1.5">⬆️</div><div class="text-[10px] text-gray-400 text-center">..</div></div>`;
     }
     d.entries.forEach(e=>{
@@ -768,7 +926,7 @@ async function loadFiles(path){
       html+=`<div id="${eid}" class="file-card rounded-2xl border border-slate-700/80 bg-slate-900/60 p-3 flex flex-col items-center cursor-pointer group relative"
           onclick="selectCard('${eid}')"
           ondblclick="${e.is_dir?`loadFiles('${e.path.replace(/'/g,"\\'")}')`:`editFile('${e.path.replace(/'/g,"\\'")}')`}"
-          oncontextmenu="showCtxMenu(event,'${e.path.replace(/'/g,"\\'")}',${ e.is_dir})">
+          oncontextmenu="showCtxMenu(event,'${e.path.replace(/'/g,"\\'")}',${e.is_dir})">
         <div class="text-3xl mb-1.5">${icon}</div>
         <div class="text-[10px] text-gray-200 text-center truncate w-full" title="${e.name}">${e.name}</div>
         <div class="text-[9px] text-gray-500 mt-0.5">${e.permissions}</div>
@@ -785,12 +943,12 @@ async function loadFiles(path){
       const icon=e.is_dir?'📁':getFileIcon(e.name);
       const size=e.is_dir?'–':fmtSize(e.size);
       html+=`<tr class="border-b border-white/5 hover:bg-white/5 group">
-        <td class="px-2 py-2 cursor-pointer" ondblclick="${e.is_dir?`loadFiles('${e.path.replace(/'/g,"\\'")}')`:`editFile('${e.path.replace(/'/g,"\\'")}')`}">${icon} ${e.name}</td>
+        <td class="px-2 py-2 cursor-pointer" ondblclick="${e.is_dir?`loadFiles('${e.path.replace(/'/g,"\\'")}')`:` editFile('${e.path.replace(/'/g,"\\'")}')` }">${icon} ${e.name}</td>
         <td class="px-2 py-2 font-mono text-[10px] text-gray-500">${e.permissions}</td>
         <td class="px-2 py-2 text-right text-gray-400">${size}</td>
         <td class="px-2 py-2 text-center">
           <div class="inline-flex gap-1 opacity-0 group-hover:opacity-100 transition">
-            ${e.is_dir?`<button onclick="openTerminalAt('${e.path.replace(/'/g,"\\'")}')"
+            ${e.is_dir?`<button onclick="openTerminalAt('${e.path.replace(/'/g,"\\'")}') "
               class="btn-mac bg-slate-800 border border-slate-600 text-[10px] rounded-full px-2 py-0.5">🖥️</button>`:''}
             <button onclick="renameItem('${e.path.replace(/'/g,"\\'")}')"
               class="btn-mac bg-slate-800 border border-slate-600 text-[10px] rounded-full px-2 py-0.5">✏️</button>
@@ -835,12 +993,157 @@ document.getElementById('ctx-rename').addEventListener('click',()=>renameItem(ct
 document.getElementById('ctx-del').addEventListener('click',()=>deleteItem(ctxTarget));
 document.getElementById('ctx-dl').addEventListener('click',()=>{ window.location='/api/files/download?path='+encodeURIComponent(ctxTarget); });
 
-async function editFile(path){
-  const d=await fetch('/api/files/read?path='+encodeURIComponent(path)).then(r=>r.json());
-  const content=prompt('Edit: '+path,d.content||''); if(content===null) return;
-  const fd=new FormData(); fd.append('path',path); fd.append('content',content);
-  await fetch('/api/files/write',{method:'POST',body:fd}); loadFiles(currentPath);
+// ════════════════════════════════════════
+// macOS POPUP FILE EDITOR
+// ════════════════════════════════════════
+let _editorCurrentPath = null;
+
+const _editorOverlay  = document.getElementById('file-editor-overlay');
+const _editorWindow   = document.getElementById('file-editor-window');
+const _editorTextarea = document.getElementById('file-editor-textarea');
+const _editorTitle    = document.getElementById('editor-title-text');
+const _editorPathEl   = document.getElementById('editor-path-text');
+const _editorStatus   = document.getElementById('editor-save-status');
+const _editorStatusBar= document.getElementById('file-editor-statusbar');
+
+function _editorSetStatus(msg, type=''){
+  _editorStatus.textContent = msg;
+  _editorStatus.className = type;
 }
+
+function _editorUpdateStatusBar(){
+  const ta = _editorTextarea;
+  const lines = ta.value.split('\n').length;
+  const chars = ta.value.length;
+  const pos   = ta.selectionStart;
+  const lineNo = ta.value.substring(0,pos).split('\n').length;
+  const colNo  = pos - ta.value.lastIndexOf('\n', pos-1);
+  _editorStatusBar.textContent = `Ln ${lineNo}, Col ${colNo}   |   ${lines} lines   ${chars} chars`;
+}
+
+function openEditorModal(path, content){
+  _editorCurrentPath = path;
+  const filename = path.split('/').pop() || path;
+  _editorTitle.textContent  = filename;
+  _editorPathEl.textContent = path;
+  _editorTextarea.value     = content;
+  _editorSetStatus('');
+  _editorUpdateStatusBar();
+  _editorOverlay.classList.add('open');
+  setTimeout(()=> _editorTextarea.focus(), 280);
+}
+
+function closeEditorModal(){
+  _editorOverlay.classList.remove('open');
+  _editorCurrentPath = null;
+}
+
+// Open: fetch file content → show modal
+async function editFile(path){
+  // Show modal immediately with loading state
+  _editorCurrentPath = path;
+  const filename = path.split('/').pop() || path;
+  _editorTitle.textContent  = filename;
+  _editorPathEl.textContent = path;
+  _editorTextarea.value     = '';
+  _editorTextarea.placeholder = 'Loading…';
+  _editorSetStatus('⏳ Loading…', 'busy');
+  _editorStatusBar.textContent = '';
+  _editorOverlay.classList.add('open');
+
+  try {
+    const d = await fetch('/api/files/read?path='+encodeURIComponent(path)).then(r=>r.json());
+    if(d.error){ _editorSetStatus('❌ '+d.error, 'err'); _editorTextarea.placeholder=''; return; }
+    _editorTextarea.placeholder = '';
+    _editorTextarea.value = d.content || '';
+    _editorSetStatus('');
+    _editorUpdateStatusBar();
+    setTimeout(()=> _editorTextarea.focus(), 60);
+  } catch(err){
+    _editorSetStatus('❌ Network error: '+err.message, 'err');
+    _editorTextarea.placeholder = '';
+  }
+}
+
+// Reload file
+async function _editorReload(){
+  if(!_editorCurrentPath) return;
+  _editorSetStatus('🔄 Reloading…', 'busy');
+  try {
+    const d = await fetch('/api/files/read?path='+encodeURIComponent(_editorCurrentPath)).then(r=>r.json());
+    if(d.error){ _editorSetStatus('❌ '+d.error, 'err'); return; }
+    _editorTextarea.value = d.content || '';
+    _editorSetStatus('✅ Reloaded', 'ok');
+    _editorUpdateStatusBar();
+    setTimeout(()=>_editorSetStatus(''), 2000);
+  } catch(err){
+    _editorSetStatus('❌ '+err.message, 'err');
+  }
+}
+
+// Save file
+async function _editorSave(){
+  if(!_editorCurrentPath) return;
+  const saveBtn = document.getElementById('editor-save-btn');
+  saveBtn.disabled = true;
+  saveBtn.style.opacity = '0.65';
+  _editorSetStatus('💾 Saving…', 'busy');
+  try {
+    const fd = new FormData();
+    fd.append('path', _editorCurrentPath);
+    fd.append('content', _editorTextarea.value);
+    const r = await fetch('/api/files/write', {method:'POST', body:fd});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok || d.error){
+      _editorSetStatus('❌ '+(d.error||'Save failed'), 'err');
+    } else {
+      _editorSetStatus('✅ Saved!', 'ok');
+      setTimeout(()=>{ closeEditorModal(); loadFiles(currentPath); }, 700);
+    }
+  } catch(err){
+    _editorSetStatus('❌ '+err.message, 'err');
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.style.opacity = '1';
+  }
+}
+
+// Wire up buttons
+document.getElementById('editor-save-btn').addEventListener('click', _editorSave);
+document.getElementById('editor-cancel-btn').addEventListener('click', closeEditorModal);
+document.getElementById('editor-dot-close').addEventListener('click', closeEditorModal);
+document.getElementById('editor-reload-btn').addEventListener('click', _editorReload);
+
+// Close on overlay backdrop click (not on window itself)
+_editorOverlay.addEventListener('click', function(e){
+  if(e.target === _editorOverlay) closeEditorModal();
+});
+
+// Close on Escape key
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape' && _editorOverlay.classList.contains('open')) closeEditorModal();
+  // Ctrl+S / Cmd+S to save
+  if((e.ctrlKey||e.metaKey) && e.key==='s' && _editorOverlay.classList.contains('open')){
+    e.preventDefault();
+    _editorSave();
+  }
+});
+
+// Update status bar on cursor move / type
+_editorTextarea.addEventListener('keyup', _editorUpdateStatusBar);
+_editorTextarea.addEventListener('click', _editorUpdateStatusBar);
+
+// Handle Tab key → insert 2 spaces
+_editorTextarea.addEventListener('keydown', function(e){
+  if(e.key === 'Tab'){
+    e.preventDefault();
+    const s = this.selectionStart, en = this.selectionEnd;
+    this.value = this.value.substring(0,s) + '  ' + this.value.substring(en);
+    this.selectionStart = this.selectionEnd = s+2;
+  }
+});
+
+// ─ OTHER FILE OPERATIONS ─
 async function deleteItem(path){
   if(!confirm('Delete: '+path+'?')) return;
   const fd=new FormData(); fd.append('path',path);
