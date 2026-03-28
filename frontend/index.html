@@ -231,6 +231,24 @@
       .nav-item { padding: 12px 12px; }
       .btn-mac { min-height: 36px; }
     }
+
+    /* ── MOBILE BOTTOM SAFE AREA ── */
+    /* Ensures last content is never hidden behind gesture bar or screen edge */
+    #main-content {
+      padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+    }
+    /* On desktop the sidebar is always visible, reduce extra padding */
+    @media (min-width: 1024px) {
+      #main-content {
+        padding-bottom: 32px;
+      }
+    }
+
+    /* Bottom spacer inside sections — adds breathing room after last card */
+    .section-bottom-spacer {
+      height: 24px;
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body class="text-white overflow-hidden h-screen">
@@ -518,6 +536,8 @@
           </div>
         </div>
       </div>
+      <!-- Bottom breathing room for mobile -->
+      <div class="section-bottom-spacer"></div>
     </section>
 
     <!-- ══════ FILE MANAGER ══════ -->
@@ -555,6 +575,7 @@
         </div>
       </div>
       <div id="file-list" class="glass border border-white/10 rounded-2xl p-3 overflow-auto" style="min-height:220px;"></div>
+      <div class="section-bottom-spacer"></div>
     </section>
 
     <!-- ══════ TERMINAL ══════ -->
@@ -575,6 +596,7 @@
         </div>
         <div id="terminal-container" class="bg-[#010409]"></div>
       </div>
+      <div class="section-bottom-spacer"></div>
     </section>
 
     <!-- ══════ PROCESSES ══════ -->
@@ -596,6 +618,7 @@
       </div>
       <div id="svc-output" class="hidden glass border border-emerald-500/40 rounded-2xl p-3 text-[11px] font-mono text-emerald-200 mb-3 whitespace-pre-wrap overflow-auto max-h-36"></div>
       <div id="process-list" class="glass border border-white/10 rounded-2xl p-3 overflow-auto" style="min-height:200px;"></div>
+      <div class="section-bottom-spacer"></div>
     </section>
 
     <!-- ══════ SETTINGS ══════ -->
@@ -651,6 +674,7 @@
           </div>
         </div>
       </div>
+      <div class="section-bottom-spacer"></div>
     </section>
 
   </main>
