@@ -4,61 +4,105 @@ import threading
 import subprocess
 import shutil
 import json
-from collections import deque
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from backend.utils.auth_guard import require_auth
 
 router = APIRouter()
 
-# ── In-memory history store ──
-MAX_SAMPLES = 32 * 86400  # 32 days of per-second samples
-_history = deque(maxlen=MAX_SAMPLES)
-_lock = threading.Lock()
+# ── Live speed tracking (psutil, 1-sec delta) ──
+_live_lock = threading.Lock()
 _last_counters = None
 _last_time = None
-_running = False
-
-# ── Speed test state ──
-_speedtest_lock = threading.Lock()
-_speedtest_running = False
-_speedtest_result = None   # last cached result
+_latest_speed = {"dl": 0.0, "ul": 0.0}
+_live_running = False
 
 
-def _collect_loop():
-    global _last_counters, _last_time
+def _live_loop():
+    global _last_counters, _last_time, _latest_speed
     _last_counters = psutil.net_io_counters()
     _last_time = time.time()
-    while _running:
+    while _live_running:
         time.sleep(1)
         now = time.time()
         cur = psutil.net_io_counters()
         dt = now - _last_time
         if dt > 0:
-            dl_speed = (cur.bytes_recv - _last_counters.bytes_recv) / dt
-            ul_speed = (cur.bytes_sent - _last_counters.bytes_sent) / dt
-            with _lock:
-                _history.append({
-                    "ts": now,
-                    "dl": max(0, dl_speed),
-                    "ul": max(0, ul_speed),
-                    "total_recv": cur.bytes_recv,
-                    "total_sent": cur.bytes_sent,
-                })
+            with _live_lock:
+                _latest_speed = {
+                    "dl": max(0.0, (cur.bytes_recv - _last_counters.bytes_recv) / dt),
+                    "ul": max(0.0, (cur.bytes_sent - _last_counters.bytes_sent) / dt),
+                }
         _last_counters = cur
         _last_time = now
 
 
-def start_collector():
-    global _running
-    if not _running:
-        _running = True
-        t = threading.Thread(target=_collect_loop, daemon=True)
+def start_live_collector():
+    global _live_running
+    if not _live_running:
+        _live_running = True
+        t = threading.Thread(target=_live_loop, daemon=True)
         t.start()
 
 
-start_collector()
+start_live_collector()
 
+
+# ── vnStat cache ──
+_vnstat_cache = None
+_vnstat_cache_time = 0.0
+_vnstat_lock = threading.Lock()
+VNSTAT_CACHE_TTL = 3600  # 1 hour
+
+
+def _get_default_iface() -> str:
+    """Return the first non-loopback interface vnStat knows about."""
+    try:
+        result = subprocess.run(
+            ["vnstat", "--json"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            ifaces = data.get("interfaces", [])
+            if ifaces:
+                return ifaces[0]["name"]
+    except Exception:
+        pass
+    # fallback: first non-loopback from psutil
+    for iface in psutil.net_if_stats():
+        if iface != "lo":
+            return iface
+    return "eth0"
+
+
+def _fetch_vnstat() -> dict | None:
+    """Run vnstat --json and parse. Returns raw dict or None on error."""
+    try:
+        result = subprocess.run(
+            ["vnstat", "--json"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0:
+            return json.loads(result.stdout)
+    except Exception:
+        pass
+    return None
+
+
+def _get_vnstat_cached(force: bool = False) -> dict | None:
+    global _vnstat_cache, _vnstat_cache_time
+    with _vnstat_lock:
+        now = time.time()
+        if force or _vnstat_cache is None or (now - _vnstat_cache_time) > VNSTAT_CACHE_TTL:
+            data = _fetch_vnstat()
+            if data is not None:
+                _vnstat_cache = data
+                _vnstat_cache_time = now
+        return _vnstat_cache
+
+
+# ── Formatters ──
 
 def _fmt_speed(bps: float) -> str:
     if bps >= 1_048_576:
@@ -67,6 +111,8 @@ def _fmt_speed(bps: float) -> str:
 
 
 def _fmt_bytes(b: float) -> str:
+    if b >= 1_099_511_627_776:
+        return f"{b/1_099_511_627_776:.2f} TB"
     if b >= 1_073_741_824:
         return f"{b/1_073_741_824:.2f} GB"
     if b >= 1_048_576:
@@ -74,62 +120,145 @@ def _fmt_bytes(b: float) -> str:
     return f"{b/1024:.1f} KB"
 
 
-RANGE_SECONDS = {
-    "24h":  86400,
-    "2d":   2 * 86400,
-    "3d":   3 * 86400,
-    "7d":   7 * 86400,
-    "1mo":  30 * 86400,
-    "1yr":  365 * 86400,
+# ── Range → vnStat bucket mapping ──
+# Returns (bucket_type, max_entries)
+RANGE_MAP = {
+    "1h":  ("hour",  1),
+    "6h":  ("hour",  6),
+    "12h": ("hour", 12),
+    "24h": ("day",   1),
+    "2d":  ("day",   2),
+    "3d":  ("day",   3),
+    "7d":  ("day",   7),
+    "15d": ("day",  15),
+    "1mo": ("month",  1),
+    "3mo": ("month",  3),
+    "6mo": ("month",  6),
+    "1yr": ("month", 12),
 }
 
 
+def _extract_history(iface_data: dict, bucket: str, count: int) -> list[dict]:
+    """Extract last `count` entries of bucket type from vnStat interface data."""
+    traffic = iface_data.get("traffic", {})
+    if bucket == "hour":
+        entries = traffic.get("hour", [])
+    elif bucket == "day":
+        entries = traffic.get("day", [])
+    else:
+        entries = traffic.get("month", [])
+
+    # vnStat returns oldest-first; take last N
+    return entries[-count:] if len(entries) >= count else entries
+
+
+# ─────────────────────────────────────────
+# ROUTES
+# ─────────────────────────────────────────
+
 @router.get("/live")
 async def net_live(request: Request):
+    """Real-time 1-second network speed via psutil delta."""
     require_auth(request)
-    with _lock:
-        if not _history:
-            return JSONResponse({"dl": "0.0 KB/s", "ul": "0.0 KB/s", "dl_raw": 0, "ul_raw": 0})
-        latest = _history[-1]
+    with _live_lock:
+        speed = dict(_latest_speed)
     return JSONResponse({
-        "dl": _fmt_speed(latest["dl"]),
-        "ul": _fmt_speed(latest["ul"]),
-        "dl_raw": latest["dl"],
-        "ul_raw": latest["ul"],
+        "dl": _fmt_speed(speed["dl"]),
+        "ul": _fmt_speed(speed["ul"]),
+        "dl_raw": round(speed["dl"], 2),
+        "ul_raw": round(speed["ul"], 2),
     })
 
 
 @router.get("/history")
 async def net_history(request: Request, range: str = "24h"):
+    """Historical network usage from vnStat. Falls back to psutil totals if vnstat unavailable."""
     require_auth(request)
-    seconds = RANGE_SECONDS.get(range, 86400)
-    cutoff = time.time() - seconds
-    with _lock:
-        samples = [s for s in _history if s["ts"] >= cutoff]
-    if not samples:
+
+    bucket, count = RANGE_MAP.get(range, ("day", 1))
+    data = _get_vnstat_cached()
+
+    if data is None:
+        # vnstat not available
         return JSONResponse({
             "range": range,
-            "total_dl": "0.0 KB",
-            "total_ul": "0.0 KB",
+            "total_dl": "N/A",
+            "total_ul": "N/A",
             "sparkline_dl": [],
             "sparkline_ul": [],
+            "labels": [],
+            "vnstat": False,
+            "error": "vnstat not available. Install with: apt install vnstat -y",
         })
-    total_recv_bytes = sum(s["dl"] for s in samples)
-    total_sent_bytes = sum(s["ul"] for s in samples)
-    bucket_count = 60
-    bucket_size = max(1, len(samples) // bucket_count)
+
+    ifaces = data.get("interfaces", [])
+    if not ifaces:
+        return JSONResponse({
+            "range": range,
+            "total_dl": "0 KB",
+            "total_ul": "0 KB",
+            "sparkline_dl": [],
+            "sparkline_ul": [],
+            "labels": [],
+            "vnstat": True,
+        })
+
+    # Aggregate across all interfaces (or first interface)
+    iface = ifaces[0]
+    entries = _extract_history(iface, bucket, count)
+
+    total_rx = 0
+    total_tx = 0
     sparkline_dl = []
     sparkline_ul = []
-    for i in range(0, len(samples), bucket_size):
-        chunk = samples[i:i + bucket_size]
-        sparkline_dl.append(round(sum(c["dl"] for c in chunk) / len(chunk), 1))
-        sparkline_ul.append(round(sum(c["ul"] for c in chunk) / len(chunk), 1))
+    labels = []
+
+    for e in entries:
+        rx = e.get("rx", 0)  # bytes
+        tx = e.get("tx", 0)
+        total_rx += rx
+        total_tx += tx
+        sparkline_dl.append(rx)
+        sparkline_ul.append(tx)
+
+        # Build label
+        if bucket == "hour":
+            t = e.get("time", {})
+            labels.append(f"{e.get('date',{}).get('day','?')}/{e.get('date',{}).get('month','?')} {t.get('hour','?'):02d}:00" if isinstance(t.get('hour'), int) else "--")
+        elif bucket == "day":
+            d = e.get("date", {})
+            labels.append(f"{d.get('day','?')}/{d.get('month','?')}/{str(d.get('year','?'))[-2:]}")
+        else:
+            d = e.get("date", {})
+            labels.append(f"{d.get('month','?')}/{str(d.get('year','?'))[-2:]}")
+
     return JSONResponse({
         "range": range,
-        "total_dl": _fmt_bytes(total_recv_bytes),
-        "total_ul": _fmt_bytes(total_sent_bytes),
-        "sparkline_dl": sparkline_dl[-60:],
-        "sparkline_ul": sparkline_ul[-60:],
+        "total_dl": _fmt_bytes(total_rx),
+        "total_ul": _fmt_bytes(total_tx),
+        "total_dl_raw": total_rx,
+        "total_ul_raw": total_tx,
+        "sparkline_dl": sparkline_dl,
+        "sparkline_ul": sparkline_ul,
+        "labels": labels,
+        "interface": iface.get("name", "unknown"),
+        "vnstat": True,
+        "cached_at": int(_vnstat_cache_time),
+    })
+
+
+@router.post("/refresh")
+async def net_refresh(request: Request):
+    """Force-refresh vnStat cache immediately."""
+    require_auth(request)
+    data = _get_vnstat_cached(force=True)
+    if data is None:
+        return JSONResponse({"status": "error", "message": "vnstat not available"}, status_code=503)
+    ifaces = [i.get("name") for i in data.get("interfaces", [])]
+    return JSONResponse({
+        "status": "ok",
+        "interfaces": ifaces,
+        "cached_at": int(_vnstat_cache_time),
     })
 
 
@@ -138,26 +267,12 @@ async def net_history(request: Request, range: str = "24h"):
 # ──────────────────────────────────────────
 
 def _ensure_speedtest_cli() -> tuple[bool, str]:
-    """
-    Checks if speedtest-cli is available on PATH.
-    If not, tries to install it automatically:
-      1. apt-get install -y speedtest-cli  (Debian / Ubuntu)
-      2. pip install speedtest-cli          (fallback, any OS)
-    Returns (success: bool, message: str).
-    """
-    # Already installed — nothing to do
     if shutil.which("speedtest-cli"):
         return True, "ok"
-
-    # ── Try apt first (most VPS distros are Debian/Ubuntu) ──
     apt = shutil.which("apt-get") or shutil.which("apt")
     if apt:
         try:
-            # Update package lists (best-effort, ignore errors)
-            subprocess.run(
-                [apt, "update", "-qq"],
-                capture_output=True, timeout=60
-            )
+            subprocess.run([apt, "update", "-qq"], capture_output=True, timeout=60)
             res = subprocess.run(
                 [apt, "install", "-y", "speedtest-cli"],
                 capture_output=True, text=True, timeout=120
@@ -165,9 +280,7 @@ def _ensure_speedtest_cli() -> tuple[bool, str]:
             if res.returncode == 0 and shutil.which("speedtest-cli"):
                 return True, "installed via apt"
         except Exception:
-            pass  # fall through to pip
-
-    # ── Fallback: pip install ──
+            pass
     try:
         pip = shutil.which("pip3") or shutil.which("pip")
         if pip:
@@ -179,7 +292,6 @@ def _ensure_speedtest_cli() -> tuple[bool, str]:
                 return True, "installed via pip"
     except Exception:
         pass
-
     return False, (
         "speedtest-cli could not be installed automatically. "
         "Run manually: apt install speedtest-cli"
@@ -190,39 +302,40 @@ def _ensure_speedtest_cli() -> tuple[bool, str]:
 # SPEED TEST
 # ──────────────────────────────────────────
 
+_speedtest_lock = threading.Lock()
+_speedtest_running = False
+_speedtest_result = None
+
+
 def _run_speedtest_thread():
-    """Auto-installs speedtest-cli if missing, then runs the test."""
     global _speedtest_running, _speedtest_result
     try:
-        # ── Step 1: ensure binary exists ──
         ok, msg = _ensure_speedtest_cli()
         if not ok:
             _speedtest_result = {"status": "error", "message": msg}
             return
-
-        # ── Step 2: run the test ──
         proc = subprocess.run(
             ["speedtest-cli", "--json", "--secure"],
             capture_output=True, text=True, timeout=120
         )
         if proc.returncode == 0:
-            data = json.loads(proc.stdout)
+            d = json.loads(proc.stdout)
             _speedtest_result = {
                 "status": "ok",
-                "download_mbps": round(data["download"] / 1_000_000, 2),
-                "upload_mbps":   round(data["upload"]   / 1_000_000, 2),
-                "ping_ms":       round(data["ping"], 1),
-                "server":        data["server"]["name"],
-                "server_country": data["server"]["country"],
-                "sponsor":       data["server"]["sponsor"],
-                "timestamp":     data["timestamp"],
-                "ip":            data.get("client", {}).get("ip", "--"),
-                "isp":           data.get("client", {}).get("isp", "--"),
+                "download_mbps": round(d["download"] / 1_000_000, 2),
+                "upload_mbps":   round(d["upload"]   / 1_000_000, 2),
+                "ping_ms":       round(d["ping"], 1),
+                "server":        d["server"]["name"],
+                "server_country": d["server"]["country"],
+                "sponsor":       d["server"]["sponsor"],
+                "timestamp":     d["timestamp"],
+                "ip":            d.get("client", {}).get("ip", "--"),
+                "isp":           d.get("client", {}).get("isp", "--"),
             }
         else:
             _speedtest_result = {
                 "status": "error",
-                "message": proc.stderr.strip() or "speedtest-cli exited with code " + str(proc.returncode)
+                "message": proc.stderr.strip() or f"speedtest-cli exited with code {proc.returncode}",
             }
     except subprocess.TimeoutExpired:
         _speedtest_result = {"status": "error", "message": "Speed test timed out (120s)"}
@@ -234,7 +347,7 @@ def _run_speedtest_thread():
 
 @router.post("/speedtest")
 async def run_speedtest(request: Request):
-    """Starts a speed test in background. Returns running=True while in progress."""
+    """Starts a speed test in background."""
     require_auth(request)
     global _speedtest_running
     with _speedtest_lock:
