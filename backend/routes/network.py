@@ -55,35 +55,79 @@ _vnstat_lock = threading.Lock()
 VNSTAT_CACHE_TTL = 3600  # 1 hour
 
 
-def _get_default_iface() -> str:
-    """Return the first non-loopback interface vnStat knows about."""
-    try:
-        result = subprocess.run(
-            ["vnstat", "--json"],
-            capture_output=True, text=True, timeout=10
-        )
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            ifaces = data.get("interfaces", [])
-            if ifaces:
-                return ifaces[0]["name"]
-    except Exception:
-        pass
-    # fallback: first non-loopback from psutil
-    for iface in psutil.net_if_stats():
-        if iface != "lo":
-            return iface
-    return "eth0"
+# ── Interface detection ──
+
+def _detect_iface(data: dict) -> dict | None:
+    """
+    Pick the best interface from vnStat JSON output.
+    Priority:
+      1. Any interface matching common VPS names: ens5, ens3, eth0, enp*, ens*
+      2. The interface with the most total traffic (rx+tx)
+      3. First interface in list
+    Skips loopback (lo) and virtual/docker interfaces.
+    """
+    ifaces = data.get("interfaces", [])
+    if not ifaces:
+        return None
+
+    SKIP = {"lo", "docker0", "virbr0", "lxcbr0", "br-"}
+    PREFERRED = ["ens5", "ens3", "eth0", "ens4", "enp0s3", "enp3s0"]
+
+    candidates = [
+        i for i in ifaces
+        if not any(i["name"].startswith(s) for s in SKIP)
+    ]
+    if not candidates:
+        return ifaces[0]
+
+    # Try preferred names first
+    for pref in PREFERRED:
+        for iface in candidates:
+            if iface["name"] == pref:
+                return iface
+
+    # Pick the one with most traffic (most data = primary interface)
+    def _total_traffic(iface):
+        traffic = iface.get("traffic", {})
+        total = 0
+        for bucket in ("day", "month", "hour"):
+            for entry in traffic.get(bucket, []):
+                total += _parse_rx(entry) + _parse_tx(entry)
+        return total
+
+    return max(candidates, key=_total_traffic)
+
+
+# ── vnStat rx/tx byte extraction ──
+# vnStat v2.x JSON: rx/tx are integers in BYTES directly
+# vnStat v1.x JSON: rx/tx stored under "traffic" with "bytes" sub-key (KiB)
+# We handle both schemas safely.
+
+def _parse_rx(entry: dict) -> int:
+    """Extract download bytes from a vnStat traffic entry (handles v1 and v2 schema)."""
+    rx = entry.get("rx", 0)
+    if isinstance(rx, dict):
+        # v1 schema: {"bytes": N, "kib": N}  — value is in bytes
+        return int(rx.get("bytes", 0))
+    return int(rx)  # v2 schema: plain integer bytes
+
+
+def _parse_tx(entry: dict) -> int:
+    """Extract upload bytes from a vnStat traffic entry (handles v1 and v2 schema)."""
+    tx = entry.get("tx", 0)
+    if isinstance(tx, dict):
+        return int(tx.get("bytes", 0))
+    return int(tx)
 
 
 def _fetch_vnstat() -> dict | None:
-    """Run vnstat --json and parse. Returns raw dict or None on error."""
+    """Run vnstat --json and return parsed dict, or None on failure."""
     try:
         result = subprocess.run(
             ["vnstat", "--json"],
             capture_output=True, text=True, timeout=15
         )
-        if result.returncode == 0:
+        if result.returncode == 0 and result.stdout.strip():
             return json.loads(result.stdout)
     except Exception:
         pass
@@ -107,21 +151,26 @@ def _get_vnstat_cached(force: bool = False) -> dict | None:
 def _fmt_speed(bps: float) -> str:
     if bps >= 1_048_576:
         return f"{bps/1_048_576:.2f} MB/s"
-    return f"{bps/1024:.1f} KB/s"
+    if bps >= 1024:
+        return f"{bps/1024:.1f} KB/s"
+    return f"{bps:.0f} B/s"
 
 
 def _fmt_bytes(b: float) -> str:
+    """Auto-scale bytes to human readable string."""
     if b >= 1_099_511_627_776:
         return f"{b/1_099_511_627_776:.2f} TB"
     if b >= 1_073_741_824:
         return f"{b/1_073_741_824:.2f} GB"
     if b >= 1_048_576:
-        return f"{b/1_048_576:.1f} MB"
-    return f"{b/1024:.1f} KB"
+        return f"{b/1_048_576:.2f} MB"
+    if b >= 1024:
+        return f"{b/1024:.1f} KB"
+    return f"{b:.0f} B"
 
 
 # ── Range → vnStat bucket mapping ──
-# Returns (bucket_type, max_entries)
+# (bucket_type, entry_count)
 RANGE_MAP = {
     "1h":  ("hour",  1),
     "6h":  ("hour",  6),
@@ -138,18 +187,30 @@ RANGE_MAP = {
 }
 
 
-def _extract_history(iface_data: dict, bucket: str, count: int) -> list[dict]:
-    """Extract last `count` entries of bucket type from vnStat interface data."""
+def _extract_entries(iface_data: dict, bucket: str, count: int) -> list[dict]:
+    """Return last `count` entries of the given bucket type (oldest→newest order)."""
     traffic = iface_data.get("traffic", {})
-    if bucket == "hour":
-        entries = traffic.get("hour", [])
-    elif bucket == "day":
-        entries = traffic.get("day", [])
-    else:
-        entries = traffic.get("month", [])
+    key = {"hour": "hour", "day": "day", "month": "month"}.get(bucket, "day")
+    entries = traffic.get(key, [])
+    # vnStat returns oldest-first; slice last N
+    return entries[-count:] if entries else []
 
-    # vnStat returns oldest-first; take last N
-    return entries[-count:] if len(entries) >= count else entries
+
+def _entry_label(entry: dict, bucket: str) -> str:
+    """Build a human-readable label for a traffic entry."""
+    d = entry.get("date", {})
+    t = entry.get("time", {})
+    day = d.get("day", "?")
+    month = d.get("month", "?")
+    year = str(d.get("year", "??"))[-2:]
+    if bucket == "hour":
+        hour = t.get("hour", "?")
+        hour_str = f"{hour:02d}:00" if isinstance(hour, int) else "--:--"
+        return f"{day}/{month} {hour_str}"
+    elif bucket == "day":
+        return f"{day}/{month}/{year}"
+    else:
+        return f"{month}/{year}"
 
 
 # ─────────────────────────────────────────
@@ -172,14 +233,18 @@ async def net_live(request: Request):
 
 @router.get("/history")
 async def net_history(request: Request, range: str = "24h"):
-    """Historical network usage from vnStat. Falls back to psutil totals if vnstat unavailable."""
+    """
+    Historical network usage from vnStat.
+    - Interface: auto-detected (prefers ens5 > ens3 > eth0 > highest-traffic)
+    - rx/tx: summed (NOT averaged) across requested time range
+    - Units: auto-scaled bytes (B / KB / MB / GB / TB)
+    """
     require_auth(request)
 
     bucket, count = RANGE_MAP.get(range, ("day", 1))
     data = _get_vnstat_cached()
 
     if data is None:
-        # vnstat not available
         return JSONResponse({
             "range": range,
             "total_dl": "N/A",
@@ -188,25 +253,25 @@ async def net_history(request: Request, range: str = "24h"):
             "sparkline_ul": [],
             "labels": [],
             "vnstat": False,
-            "error": "vnstat not available. Install with: apt install vnstat -y",
+            "error": "vnstat not available. Install: apt install vnstat -y",
         })
 
-    ifaces = data.get("interfaces", [])
-    if not ifaces:
+    iface = _detect_iface(data)
+    if iface is None:
         return JSONResponse({
             "range": range,
-            "total_dl": "0 KB",
-            "total_ul": "0 KB",
+            "total_dl": "0 B",
+            "total_ul": "0 B",
             "sparkline_dl": [],
             "sparkline_ul": [],
             "labels": [],
             "vnstat": True,
+            "interface": "none",
         })
 
-    # Aggregate across all interfaces (or first interface)
-    iface = ifaces[0]
-    entries = _extract_history(iface, bucket, count)
+    entries = _extract_entries(iface, bucket, count)
 
+    # SUM totals — never average
     total_rx = 0
     total_tx = 0
     sparkline_dl = []
@@ -214,23 +279,13 @@ async def net_history(request: Request, range: str = "24h"):
     labels = []
 
     for e in entries:
-        rx = e.get("rx", 0)  # bytes
-        tx = e.get("tx", 0)
+        rx = _parse_rx(e)
+        tx = _parse_tx(e)
         total_rx += rx
         total_tx += tx
         sparkline_dl.append(rx)
         sparkline_ul.append(tx)
-
-        # Build label
-        if bucket == "hour":
-            t = e.get("time", {})
-            labels.append(f"{e.get('date',{}).get('day','?')}/{e.get('date',{}).get('month','?')} {t.get('hour','?'):02d}:00" if isinstance(t.get('hour'), int) else "--")
-        elif bucket == "day":
-            d = e.get("date", {})
-            labels.append(f"{d.get('day','?')}/{d.get('month','?')}/{str(d.get('year','?'))[-2:]}")
-        else:
-            d = e.get("date", {})
-            labels.append(f"{d.get('month','?')}/{str(d.get('year','?'))[-2:]}")
+        labels.append(_entry_label(e, bucket))
 
     return JSONResponse({
         "range": range,
@@ -249,15 +304,16 @@ async def net_history(request: Request, range: str = "24h"):
 
 @router.post("/refresh")
 async def net_refresh(request: Request):
-    """Force-refresh vnStat cache immediately."""
+    """Force-refresh vnStat cache immediately (bypasses 1h TTL)."""
     require_auth(request)
     data = _get_vnstat_cached(force=True)
     if data is None:
         return JSONResponse({"status": "error", "message": "vnstat not available"}, status_code=503)
-    ifaces = [i.get("name") for i in data.get("interfaces", [])]
+    iface = _detect_iface(data)
     return JSONResponse({
         "status": "ok",
-        "interfaces": ifaces,
+        "interface": iface.get("name", "unknown") if iface else "none",
+        "interfaces": [i.get("name") for i in data.get("interfaces", [])],
         "cached_at": int(_vnstat_cache_time),
     })
 
