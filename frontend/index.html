@@ -628,6 +628,17 @@
         <p class="text-[10px] sm:text-[11px] text-gray-500 mt-0.5 hidden sm:block">Panel maintenance and lifecycle controls.</p>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3 max-w-2xl">
+        <div class="glass border border-sky-500/30 rounded-2xl p-4 sm:p-5 flex flex-col gap-3">
+          <h3 class="text-sm font-semibold text-sky-300 flex items-center gap-2">🖥️ System Info</h3>
+          <p class="text-xs text-gray-400">View host details, CPU layout, memory, disk, and uptime.</p>
+          <button onclick="loadSystemInfo()" class="btn-mac self-start text-xs font-semibold rounded-full bg-sky-500 text-slate-950 px-4 py-2 shadow shadow-sky-700/40">Load System Info</button>
+          <div id="system-info-output" class="hidden glass border border-sky-500/30 rounded-xl p-3 text-[11px] font-mono text-sky-100 whitespace-pre-wrap overflow-auto max-h-48"></div>
+        </div>
+        <div class="glass border border-amber-500/30 rounded-2xl p-4 sm:p-5 flex flex-col gap-3">
+          <h3 class="text-sm font-semibold text-amber-300 flex items-center gap-2">🔁 Restart System</h3>
+          <p class="text-xs text-gray-400">Reboots the entire VPS immediately. SSH and panel session will disconnect.</p>
+          <button onclick="confirmSystemRestart()" class="btn-mac self-start text-xs font-semibold rounded-full bg-amber-500 text-slate-950 px-4 py-2 shadow shadow-amber-700/40">Restart VPS</button>
+        </div>
         <div class="glass border border-emerald-500/30 rounded-2xl p-4 sm:p-5 flex flex-col gap-3">
           <h3 class="text-sm font-semibold text-emerald-300 flex items-center gap-2">🔄 Update Panel</h3>
           <p class="text-xs text-gray-400">Pull latest code from GitHub, update pip dependencies, and restart the service automatically.</p>
@@ -1213,6 +1224,49 @@ async function confirmUpdate(){
   const el=document.getElementById('update-output');el.textContent='Updating…';el.classList.remove('hidden');
   const d=await fetch('/api/settings/update',{method:'POST'}).then(r=>r.json());
   el.textContent=d.output||d.error;
+}
+function fmtBytes(bytes){
+  if(bytes===null || bytes===undefined) return 'N/A';
+  const units=['B','KB','MB','GB','TB','PB'];
+  let val=bytes, idx=0;
+  while(val>=1024 && idx<units.length-1){ val/=1024; idx++; }
+  return `${val.toFixed(val>=100?0:2)} ${units[idx]}`;
+}
+function fmtUptime(totalSeconds){
+  if(!Number.isFinite(totalSeconds)) return 'N/A';
+  const d=Math.floor(totalSeconds/86400);
+  const h=Math.floor((totalSeconds%86400)/3600);
+  const m=Math.floor((totalSeconds%3600)/60);
+  return `${d}d ${h}h ${m}m`;
+}
+async function loadSystemInfo(){
+  const el=document.getElementById('system-info-output');
+  el.textContent='Loading system info…';
+  el.classList.remove('hidden');
+  try{
+    const d=await fetch('/api/system/info').then(r=>r.json());
+    if(d.error){ el.textContent=`Error: ${d.error}`; return; }
+    el.textContent = [
+      `Hostname: ${d.hostname}`,
+      `OS: ${d.os}`,
+      `Kernel: ${d.kernel}`,
+      `Architecture: ${d.arch}`,
+      `Python: ${d.python}`,
+      `CPU: ${d.cpu_model}`,
+      `CPU Cores: ${d.cpu_cores_physical} physical / ${d.cpu_cores_logical} logical`,
+      `RAM Total: ${fmtBytes(d.ram_total)}`,
+      `Disk Total (/): ${fmtBytes(d.disk_total)}`,
+      `Uptime: ${fmtUptime(d.uptime_seconds)}`
+    ].join('\n');
+  }catch(err){
+    el.textContent=`Error: ${err.message}`;
+  }
+}
+async function confirmSystemRestart(){
+  if(!confirm('Restart the entire VPS now? This will disconnect your current session.')) return;
+  const d=await fetch('/api/system/restart',{method:'POST'}).then(r=>r.json());
+  if(d.success) alert('Restart command sent. VPS is rebooting now.');
+  else alert(d.error || 'Failed to restart system');
 }
 async function confirmUninstall(){
   const val=document.getElementById('uninstall-confirm').value;
