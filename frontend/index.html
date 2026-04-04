@@ -249,33 +249,6 @@
       height: 24px;
       flex-shrink: 0;
     }
-    .du-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 8px 10px;
-      border: 1px solid rgba(255,255,255,0.06);
-      border-radius: 12px;
-      background: rgba(15,23,42,0.5);
-      transition: border-color 0.18s ease, transform 0.15s ease, background 0.18s ease;
-    }
-    .du-row:hover {
-      border-color: rgba(56,189,248,0.35);
-      background: rgba(15,23,42,0.7);
-      transform: translateY(-1px);
-    }
-    .du-indent {
-      display: inline-block;
-      width: 16px;
-      height: 1px;
-      margin-right: 6px;
-      background: rgba(148,163,184,0.35);
-      vertical-align: middle;
-    }
-    .du-size {
-      font-variant-numeric: tabular-nums;
-    }
   </style>
 </head>
 <body class="text-white overflow-hidden h-screen">
@@ -329,9 +302,6 @@
     <nav class="flex-1 space-y-0.5">
       <button id="nav-dashboard" onclick="showSection('dashboard')" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-transparent text-gray-300 text-sm">
         <span class="text-base">📊</span><span>Dashboard</span>
-      </button>
-      <button id="nav-disk" onclick="showSection('disk')" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-transparent text-gray-300 text-sm">
-        <span class="text-base">💽</span><span>Disk Analyzer</span>
       </button>
       <button id="nav-files" onclick="showSection('files')" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-transparent text-gray-300 text-sm">
         <span class="text-base">📁</span><span>File Manager</span>
@@ -567,37 +537,6 @@
         </div>
       </div>
       <!-- Bottom breathing room for mobile -->
-      <div class="section-bottom-spacer"></div>
-    </section>
-
-    <!-- ══════ DISK USAGE ANALYZER ══════ -->
-    <section id="section-disk" class="fade-section hidden">
-      <div class="mb-3">
-        <h2 class="text-sm sm:text-base font-semibold tracking-tight">Disk Usage Analyzer</h2>
-        <p class="text-[10px] sm:text-[11px] text-gray-500 mt-0.5 hidden sm:block">Show which folders are consuming space with a live tree view.</p>
-      </div>
-      <div class="glass border border-cyan-500/20 rounded-2xl p-3 sm:p-4 mb-3">
-        <div class="flex flex-col sm:flex-row gap-2 sm:items-end">
-          <div class="flex-1">
-            <label class="text-[10px] text-gray-400 block mb-1">Path</label>
-            <input id="du-path" type="text" value="/"
-              class="w-full bg-black/40 border border-slate-700 rounded-xl px-3 py-2 text-xs text-gray-200 outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-500/40 transition" />
-          </div>
-          <div>
-            <label class="text-[10px] text-gray-400 block mb-1">Depth</label>
-            <select id="du-depth" class="bg-black/40 border border-slate-700 rounded-xl px-3 py-2 text-xs text-gray-200 outline-none focus:border-cyan-400">
-              <option value="2">2</option>
-              <option value="3" selected>3</option>
-              <option value="4">4</option>
-              <option value="5">5</option>
-            </select>
-          </div>
-          <button onclick="loadDiskUsage()" class="btn-mac text-xs font-semibold rounded-full bg-gradient-to-r from-cyan-400 to-sky-500 text-slate-950 px-4 py-2 shadow shadow-cyan-700/30">Analyze</button>
-        </div>
-      </div>
-      <div id="du-status" class="text-[11px] text-gray-400 mb-2"></div>
-      <div id="du-warnings" class="hidden glass border border-amber-500/30 rounded-xl p-3 text-[11px] text-amber-200 mb-3 whitespace-pre-wrap"></div>
-      <div id="du-tree" class="space-y-2"></div>
       <div class="section-bottom-spacer"></div>
     </section>
 
@@ -856,8 +795,8 @@ fetch('/api/auth/status').then(r=>r.json()).then(d=>{
 });
 
 // ─ NAVIGATION ─
-const sections = ['dashboard','disk','files','terminal','processes','settings'];
-const sectionTitles = { dashboard:'Dashboard', disk:'Disk Analyzer', files:'File Manager', terminal:'Terminal', processes:'Processes', settings:'Settings' };
+const sections = ['dashboard','files','terminal','processes','settings'];
+const sectionTitles = { dashboard:'Dashboard', files:'File Manager', terminal:'Terminal', processes:'Processes', settings:'Settings' };
 
 function showSection(name){
   sections.forEach(s=>{
@@ -871,7 +810,6 @@ function showSection(name){
   if(titleEl) titleEl.textContent = sectionTitles[name] || name;
 
   if(name==='dashboard') loadStats();
-  if(name==='disk') loadDiskUsage();
   if(name==='files') loadFiles(document.getElementById('current-path').value);
   if(name==='terminal' && !termReady) initTerminal(currentTermCwd);
   if(name==='processes') loadProcesses();
@@ -1278,63 +1216,6 @@ async function manageService(action){
   const fd=new FormData();fd.append('name',name);fd.append('action',action);
   const d=await fetch('/api/processes/service',{method:'POST',body:fd}).then(r=>r.json());
   const el=document.getElementById('svc-output');el.textContent=d.output||d.error||'Done';el.classList.remove('hidden');
-}
-
-// ─ DISK USAGE ANALYZER ─
-function renderDiskTree(node, level=0){
-  if(!node) return '';
-  const indent = '<span class="du-indent"></span>'.repeat(level);
-  const sizePct = Math.max(3, Math.min(100, node._percent || 0));
-  let html = `
-    <div class="du-row">
-      <div class="min-w-0 flex-1">
-        <div class="text-[12px] text-gray-200 truncate">${indent}📁 ${node.name || node.path}</div>
-        <div class="mt-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
-          <div class="h-full rounded-full bg-gradient-to-r from-cyan-400 to-sky-500" style="width:${sizePct}%"></div>
-        </div>
-      </div>
-      <div class="du-size text-[11px] text-cyan-300 flex-shrink-0">${fmtBytes(node.size)}</div>
-    </div>
-  `;
-  (node.children || []).forEach(child => {
-    html += renderDiskTree(child, level + 1);
-  });
-  return html;
-}
-
-function annotateTreePercentages(node, rootSize){
-  if(!node) return;
-  node._percent = rootSize > 0 ? (node.size / rootSize) * 100 : 0;
-  (node.children || []).forEach(c => annotateTreePercentages(c, rootSize));
-}
-
-async function loadDiskUsage(){
-  const statusEl = document.getElementById('du-status');
-  const treeEl = document.getElementById('du-tree');
-  const warnEl = document.getElementById('du-warnings');
-  const path = (document.getElementById('du-path')?.value || '/').trim() || '/';
-  const depth = parseInt(document.getElementById('du-depth')?.value || '3', 10);
-
-  statusEl.textContent = 'Analyzing disk usage…';
-  treeEl.innerHTML = '';
-  warnEl.classList.add('hidden');
-  warnEl.textContent = '';
-  try{
-    const d = await fetch(`/api/system/disk-usage?path=${encodeURIComponent(path)}&depth=${depth}`).then(r=>r.json());
-    if(d.error){
-      statusEl.textContent = `Error: ${d.error}`;
-      return;
-    }
-    annotateTreePercentages(d.tree, d.tree.size || 0);
-    statusEl.textContent = `Analyzed ${d.path} at depth ${d.depth}. Largest folders shown first.`;
-    treeEl.innerHTML = renderDiskTree(d.tree);
-    if((d.warnings || []).length){
-      warnEl.textContent = d.warnings.join('\n');
-      warnEl.classList.remove('hidden');
-    }
-  }catch(err){
-    statusEl.textContent = `Error: ${err.message}`;
-  }
 }
 
 // ─ SETTINGS ─
